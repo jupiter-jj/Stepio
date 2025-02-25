@@ -34,7 +34,7 @@ int fsrReading;  // the analog reading from the FSR resistor divider
 #define scaleFactor 3
 #define maxRange -3000
 #define minRange 3000
-#define debounceThreshold 500
+#define debounceThreshold 600
 int fsrDataArray[N_ROWS][N_COLS] = {0};
 int maxRow;
 int maxCol;
@@ -45,17 +45,15 @@ int changeCol;
 //int prevCenterRow;
 //int prevCenterCol;
 
-//buffer variablces
-#define sampleRate 20
-#define bufferSize (80 / sampleRate)  // Number of recent points to analyze
-struct ButtonPress {
-  int row;
-  int col;
-};
-static unsigned long lastSampleTime = 0;
-
-ButtonPress buffer[bufferSize];  // Circular buffer for storing (x, y)
-int bufferIndex = 0;                   // Index of the next position to write
+static unsigned long lastZoneRelease = 0;
+static unsigned long lastScroll = 0;
+int lastZone = 0;
+int currentZone = 0;
+bool clickFlag = false;
+bool scrollFlag = false;
+int scrollRef;
+#define scrollUpdate 125
+#define scrollTimer 1500
 
 int fsrRead(int row, int column){
   row -= 1;
@@ -175,107 +173,32 @@ void dataRefineRes(int data[N_ROWS][N_COLS], int &maxRow, int &maxCol, int &cent
     }
 }
 
-void bufferTrend(ButtonPress buffer[], int &centerRow, int &centerCol, int &changeRow, int &changeCol){
-  String trendRow;
-  String trendCol;
-  if ((centerRow != -1) && (centerCol != -1)){
-    long sumRow = 0, sumCol = 0;
-    for (int i = 0; i < bufferSize; i++) {
-      if (buffer[i].row != -1){
-        sumRow += buffer[i].row;
-      } else {
-        sumRow += centerRow;
-      }
-
-      if (buffer[i].col != -1){
-        sumCol += buffer[i].col;
-      } else {
-        sumCol += centerCol;
+//0 = inactive, 1 = left active, 2 = right active, 3 = both active
+int activationZone(int data[N_ROWS][N_COLS]){
+  bool leftBool = false;
+  bool rightBool = false;
+  for(int row=1; row<=2; row++){
+    for(int col=0; col<=3; col++){
+      if (data[row][col] > debounceThreshold){
+        if (col <= 1){
+          leftBool = true;
+        } else {
+          rightBool = false;
+        }
       }
     }
-    int avgRow = (sumRow-centerRow) / (bufferSize-1);
-    int avgCol = (sumCol-centerCol) / (bufferSize-1);
-
-    changeRow = centerRow-avgRow;
-    changeCol = centerCol-avgCol;
-  }
-  else {
-    changeRow = 0;
-    changeCol = 0;
   }
 
+  if (!(leftBool || rightBool)){
+    return 0;
+  } else if (leftBool && !rightBool){
+    return 1;
+  } else if (!leftBool && rightBool){
+    return 2;
+  } else if (leftBool && !rightBool){
+    return 3;
+  }
 }
-
-bool buttonPress(ButtonPress buffer[], int bufferIndex) {
-  bool foundFirstNegative = false;
-  bool foundValidCoord = false;
-
-  // Start from the most recent entry and move backward
-  for (int i = 0; i < bufferSize; i++) {
-    // Calculate the actual buffer index for the current step
-    int idx = (bufferIndex - i - 1 + bufferSize) % bufferSize;
-
-    // Check for the pattern
-    if (!foundFirstNegative) {
-      // Look for the first (-1, -1)
-      if (buffer[idx].row == -1 && buffer[idx].col == -1) {
-        foundFirstNegative = true;
-      }
-    } else if (!foundValidCoord) {
-      // After the first (-1, -1), look for a valid (x, y)
-      if ((buffer[idx].row == 3 || buffer[idx].row == 4) && (buffer[idx].col == 1 || buffer[idx].col == 2)) {
-        foundValidCoord = true;
-      }
-    } else {
-      // After finding a valid (x, y), look for another (-1, -1)
-      if (buffer[idx].row == -1 && buffer[idx].col == -1) {
-        return true; // Found the sequence
-      }
-    }
-  }
-
-  return false; // Sequence not found
-}
-
-/*bool buttonDoubleClick(ButtonPress buffer[], int bufferIndex) {
-  bool foundFirstNegative = false;
-  bool foundValidCoord = false;
-  bool foundSecondNegative = false;
-
-  unsigned long firstClickTime = 0;
-
-  // Start from the most recent entry and move backward
-  for (int i = 0; i < bufferSize; i++) {
-    // Calculate the actual buffer index for the current step
-    int idx = (bufferIndex - i - 1 + bufferSize) % bufferSize;
-
-    // Check for the sequence
-    if (!foundFirstNegative) {
-      // Look for the first (-1, -1)
-      if (buffer[idx].row == -1 && buffer[idx].col == -1) {
-        foundFirstNegative = true;
-      }
-    } else if (!foundValidCoord) {
-      // After the first (-1, -1), look for a valid (x, y)
-      if (buffer[idx].row != -1 && buffer[idx].col != -1) {
-        foundValidCoord = true;
-        firstClickTime = buffer[idx].col; // Assuming buffer[idx].col is timestamp
-      }
-    } else if (!foundSecondNegative) {
-      // After finding a valid (x, y), look for another (-1, -1)
-      if (buffer[idx].row == -1 && buffer[idx].col == -1) {
-        foundSecondNegative = true;
-      }
-    } else {
-      // Look for the second (x, y) after the second (-1, -1)
-      if (buffer[idx].row != -1 && buffer[idx].col != -1) {
-          return true; // Double click detected
-      }
-    }
-  }
-
-  return false; // No double click sequence found
-}*/
 
 // MAIN PROGRAM ---------------------------------------------
 
@@ -313,6 +236,8 @@ void loop(void) {
   }
 
   maxCoordinates(fsrDataArray, maxRow, maxCol);
+
+  
   
   /*Serial.print(maxRow);
   Serial.print(" x ");
@@ -324,24 +249,40 @@ void loop(void) {
   Serial.print(" x ");
   Serial.println(centerCol);*/
 
-  //update circular buffer
-  if (millis() - lastSampleTime >= sampleRate) {
-    lastSampleTime = millis();
-    buffer[bufferIndex] = {centerRow, centerCol};
-    bufferTrend(buffer, centerRow, centerCol, changeRow, changeCol);
-    //if (buttonPress(buffer, bufferIndex)){
-    //  bleMouse.click();
-    //} else { //adjust changeRow
-      //int adjustedChangeRow = pow(changeRow, 2);
-      /*if (changeRow < 0){
-        adjustedChangeRow = -adjustedChangeRow;
-      }*/
-    if (changeRow != 0){
-      bleMouse.move(0,0,-changeRow,0);
-      Serial.println(changeRow);
-    }
-    //}
-    }
-    bufferIndex = (bufferIndex + 1) % bufferSize;
+  if (maxRow == -1 && maxCol == -1){
+    scrollFlag = false;
   }
+
+  if ((millis() - lastZoneRelease >= scrollTimer) && (!scrollFlag)){
+    scrollFlag = true;
+    scrollRef = centerRow;
+    lastScroll = millis();
+  }
+
+  currentZone = activationZone(fsrDataArray);
+
+  if (scrollFlag && (millis()-lastScroll >= scrollUpdate)) {
+    lastScroll = millis();
+    bleMouse.move(0,0, scrollRef-centerRow, 0);
+  } else if ((currentZone != lastZone) && (currentZone == 0)){
+    //Serial.println("MOUSE MODE");
+    if (lastZone == 1){
+      //LEFT CLICK
+      bleMouse.click(MOUSE_LEFT);
+    } else if (lastZone == 2){
+      //RIGHT CLICK
+      bleMouse.click(MOUSE_RIGHT);
+    } else if (lastZone == 3){
+      //MIDDLE CLICK
+      bleMouse.click(MOUSE_MIDDLE);
+    }
+  }
+
+
+  //update all "PREV" variables
+  if (currentZone == 0) {
+    lastZoneRelease = millis();
+  }
+
+  lastZone = activationZone(fsrDataArray);
 }
