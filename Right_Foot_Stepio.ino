@@ -31,6 +31,11 @@ bool mouseFlag = false;
 int lastFSRreading;
 long lastDebounceTime;
 
+#define cli 250
+#define exponent 1.03
+#define horiShift -110
+#define vertiShift -20
+
 
 void setup() {
   //SERIAL SETUP ----------------------------------
@@ -46,7 +51,7 @@ void setup() {
   
 
   //SENSOR SETUP ----------------------------------
-  sensor.begin(SS, 200); // to set CPI (Count per Inch), pass it as the second parameter
+  sensor.begin(SS, 250); // to set CPI (Count per Inch), pass it as the second parameter
   /*if(sensor.begin(SS)){  // 10 is the pin connected to SS of the module.
     Serial.println("Sensor initialization successed");
   } else {
@@ -109,7 +114,32 @@ void loop() {
     Serial.print(data.dy);
     Serial.println();*/
 
-    bleMouse.move(data.dx,data.dy,0,0);
+    signed char adjustedDX;
+    signed char adjustedDY;
+  
+    if (data.dx%256 > 128){
+      adjustedDX = -((data.dx%256)-256);
+      adjustedDX = pow(exponent, adjustedDX-horiShift) + vertiShift;
+      adjustedDX = -adjustedDX;
+    } else {
+      adjustedDX = ((data.dx%256)-256);
+      adjustedDX = pow(exponent, adjustedDX-horiShift) + vertiShift;
+    }
+
+    if (data.dy%256 > 128){
+      adjustedDY = -((data.dy%256)-256);
+      adjustedDY = pow(exponent, adjustedDY-horiShift) + vertiShift;
+      adjustedDY = -adjustedDY;
+    } else{
+      adjustedDY = ((data.dy%256)-256);
+      adjustedDY = pow(exponent, adjustedDY-horiShift) + vertiShift;
+    }
+
+    /*Serial.print(data.dx%256-256);
+    Serial.print(", ");
+    Serial.println(data.dy%256-256);*/
+
+    bleMouse.move(adjustedDX,adjustedDY,0,0);
     delay(10);
 
     //motion = false;
