@@ -20,22 +20,43 @@ volatile bool motion = false;
 
 // FSR Analog
 #define fsrAnalogPin 36 // FSR is connected to GPIO36
-#define fsrThreshold
 int fsrReading;      // the analog reading from the FSR resistor divider
 
 // debouncer variables
 #define debounceDelay 50
-#define changeThreshold 150
-#define onThreshold 50
+#define changeThreshold 125
+#define onThreshold 20
 bool mouseFlag = false;
 int lastFSRreading;
 long lastDebounceTime;
 
-#define cli 250
-#define exponent 1.03
-#define horiShift -110
-#define vertiShift -20
+#define cli 170
+#define piecewiseThresh 6
+#define exponentFast 1.05
+#define exponentSlow 1
 
+
+signed char mathFunct(signed char data, int functNum){
+  signed char adjustedData = data%256;
+
+  if (functNum == 0){
+    if (adjustedData > 128) {
+      adjustedData = -(adjustedData-256); //make all data positive
+    }
+
+    if (adjustedData > piecewiseThresh){
+      adjustedData = pow(adjustedData, exponentFast) - 0.5;
+    } else {
+      adjustedData = pow(adjustedData, exponentSlow);
+    }
+
+    if (data%256 > 128){
+      adjustedData = -adjustedData;;
+    }
+
+    return adjustedData;
+  }
+}
 
 void setup() {
   //SERIAL SETUP ----------------------------------
@@ -80,7 +101,7 @@ void loop() {
   fsrReading = analogRead(fsrAnalogPin); // read FSR sensor data
   //Serial.println(fsrReading);
 
-  // DEBOUNCER -----------------------------------------------------------------------
+  // DEBOUNCER ----------------------------------------------------------------------- 
   // If the switch changed, due to noise or pressing:
   if (abs(lastFSRreading - fsrReading) >= changeThreshold) {
     // reset the debouncing timer
@@ -104,7 +125,7 @@ void loop() {
 
   PMW3360_DATA data = sensor.readBurst(); // read PMW mouse sensor data
 
-  if(data.isOnSurface && data.isMotion && bleMouse.isConnected() && mouseFlag)
+  if(data.isOnSurface && data.isMotion && bleMouse.isConnected() && mouseFlag)  //&& mouseFlag
   {
     //cli();      
     // disable interrupt during motion data processing.
@@ -117,27 +138,29 @@ void loop() {
     signed char adjustedDX;
     signed char adjustedDY;
   
-    if (data.dx%256 > 128){
-      adjustedDX = -((data.dx%256)-256);
-      adjustedDX = pow(exponent, adjustedDX-horiShift) + vertiShift;
+    /*if (data.dx%256 > 128){
+      adjustedDX = -((data.dx%256)-256)
+      if (adjustedDX > 10){
+        adjustedDX = pow(adjustedDX, xScale);
+      }
       adjustedDX = -adjustedDX;
-    } else {
-      adjustedDX = ((data.dx%256)-256);
-      adjustedDX = pow(exponent, adjustedDX-horiShift) + vertiShift;
+    } else if (adjustedDX > 10){
+      adjustedDX = pow(data.dx, xScale);
     }
 
     if (data.dy%256 > 128){
-      adjustedDY = -((data.dy%256)-256);
-      adjustedDY = pow(exponent, adjustedDY-horiShift) + vertiShift;
+      adjustedDY = pow(-((data.dy%256)-256), yScale);
       adjustedDY = -adjustedDY;
-    } else{
-      adjustedDY = ((data.dy%256)-256);
-      adjustedDY = pow(exponent, adjustedDY-horiShift) + vertiShift;
-    }
+    } else {
+      adjustedDY = pow(data.dy, yScale);
+    }*/
 
-    /*Serial.print(data.dx%256-256);
+    adjustedDX = mathFunct(data.dx, 0);
+    adjustedDY = mathFunct(data.dy, 0);
+
+    Serial.print(data.dx);
     Serial.print(", ");
-    Serial.println(data.dy%256-256);*/
+    Serial.println(data.dy);
 
     bleMouse.move(adjustedDX,adjustedDY,0,0);
     delay(10);

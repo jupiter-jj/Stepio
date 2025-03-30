@@ -52,8 +52,11 @@ int currentZone = 0;
 bool clickFlag = false;
 bool scrollFlag = false;
 int scrollRef;
-#define scrollUpdate 125
+#define scrollUpdate 100
 #define scrollTimer 1500
+
+#define scrollThreshold 20
+#define scrollExponent 3
 
 int fsrRead(int row, int column){
   row -= 1;
@@ -175,29 +178,46 @@ void dataRefineRes(int data[N_ROWS][N_COLS], int &maxRow, int &maxCol, int &cent
 
 //0 = inactive, 1 = left active, 2 = right active, 3 = both active
 int activationZone(int data[N_ROWS][N_COLS]){
-  bool leftBool = false;
-  bool rightBool = false;
+  bool activateFlag = false;
+
   for(int row=1; row<=2; row++){
     for(int col=0; col<=3; col++){
       if (data[row][col] > debounceThreshold){
-        if (col <= 1){
-          leftBool = true;
-        } else {
-          rightBool = false;
-        }
+        activateFlag = true;
       }
     }
   }
 
-  if (!(leftBool || rightBool)){
+  if (!activateFlag){
     return 0;
-  } else if (leftBool && !rightBool){
+  } else { // if (leftBool && !rightBool)
     return 1;
-  } else if (!leftBool && rightBool){
+  } /*else if (!leftBool && rightBool){
     return 2;
   } else if (leftBool && !rightBool){
     return 3;
+  }*/
+}
+
+signed char scrollAdjust(int scrollRef, int centerRow) {
+  signed char adjustedScroll = scrollRef-centerRow;
+  if (adjustedScroll < 0) {
+    adjustedScroll = -adjustedScroll;
   }
+
+  if (adjustedScroll > scrollThreshold){
+    adjustedScroll = (pow(adjustedScroll, scrollExponent));
+    if (adjustedScroll > 128){
+      adjustedScroll = 128;
+    }
+  }
+
+  if (scrollRef-centerRow < 0){
+    adjustedScroll = -adjustedScroll;
+  }
+
+  Serial.println(adjustedScroll);
+  return adjustedScroll;
 }
 
 // MAIN PROGRAM ---------------------------------------------
@@ -236,8 +256,6 @@ void loop(void) {
   }
 
   maxCoordinates(fsrDataArray, maxRow, maxCol);
-
-  
   
   /*Serial.print(maxRow);
   Serial.print(" x ");
@@ -249,6 +267,13 @@ void loop(void) {
   Serial.print(" x ");
   Serial.println(centerCol);*/
 
+  currentZone = activationZone(fsrDataArray);
+
+  //update all "PREV" variables
+  if (currentZone == 0) {
+    lastZoneRelease = millis();
+  }
+  
   if (maxRow == -1 && maxCol == -1){
     scrollFlag = false;
   }
@@ -257,31 +282,27 @@ void loop(void) {
     scrollFlag = true;
     scrollRef = centerRow;
     lastScroll = millis();
+    bleMouse.move(0,0, -5, 0);
+    delay(500);
+    bleMouse.move(0,0, 5, 0);
   }
-
-  currentZone = activationZone(fsrDataArray);
 
   if (scrollFlag && (millis()-lastScroll >= scrollUpdate)) {
     lastScroll = millis();
-    bleMouse.move(0,0, scrollRef-centerRow, 0);
+    signed char adjustedScroll = scrollAdjust(scrollRef, centerRow);
+    bleMouse.move(0,0, adjustedScroll, 0);
   } else if ((currentZone != lastZone) && (currentZone == 0)){
     //Serial.println("MOUSE MODE");
-    if (lastZone == 1){
+    if (lastZone != 0){
       //LEFT CLICK
       bleMouse.click(MOUSE_LEFT);
-    } else if (lastZone == 2){
+    }/* else if (lastZone == 2){
       //RIGHT CLICK
       bleMouse.click(MOUSE_RIGHT);
     } else if (lastZone == 3){
       //MIDDLE CLICK
       bleMouse.click(MOUSE_MIDDLE);
-    }
-  }
-
-
-  //update all "PREV" variables
-  if (currentZone == 0) {
-    lastZoneRelease = millis();
+    }*/
   }
 
   lastZone = activationZone(fsrDataArray);
